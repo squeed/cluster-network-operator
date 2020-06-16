@@ -47,6 +47,14 @@ spec:
             source "/env/${K8S_NODE}"
             set +o allexport
           fi
+          export SYSTEMD_IGNORE_CHROOT=yes
+          # Check to see if ovs is provided by the node:
+          if systemctl status ovsdb-server; then
+            echo "openvswitch is running in systemd"
+            # Don't need to worry about restoring flows; this can only change if we've rebooted
+            exec tail -F /var/log/openvswitch-host/ovs-vswitchd.log /var/log/openvswitch-host/ovsdb-server.log
+          fi
+
           echo "$(date -Iseconds) - starting ovs-daemons"
           chown -R openvswitch:openvswitch /run/openvswitch
           chown -R openvswitch:openvswitch /etc/openvswitch
@@ -89,23 +97,23 @@ spec:
           name: var-lib-openvswitch
         - mountPath: /env
           name: env-overrides
+        - mountPath: /run/systemd
+          name: host-run-systemd
+        - mountPath: /var/log/openvswitch-host
+          name: host-var-log-openvswitch
         resources:
           requests:
             cpu: 100m
             memory: 300Mi
         terminationMessagePolicy: FallbackToLogsOnError
-        livenessProbe:
-          exec:
-            command:
-            - /usr/share/openvswitch/scripts/ovs-ctl
-            - status
-          initialDelaySeconds: 15
-          periodSeconds: 5
         readinessProbe:
           exec:
             command:
-            - /usr/share/openvswitch/scripts/ovs-ctl
-            - status
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              /usr/bin/ovs-vsctl -t 5 show > /dev/null
           initialDelaySeconds: 15
           periodSeconds: 5
         terminationGracePeriodSeconds: 10
@@ -136,6 +144,14 @@ spec:
       - name: host-sys
         hostPath:
           path: /sys
+      - name: host-run-systemd
+        hostPath:
+          path: /run/systemd
+          type: Directory
+      - name: host-var-log-openvswitch
+        hostPath:
+          path: /var/log/openvswitch
+          type: Directory
       - name: env-overrides
         configMap:
           name: env-overrides
