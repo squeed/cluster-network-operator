@@ -175,6 +175,11 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 		updateNode, updateMaster = shouldUpdateOVNKonUpgrade(bootstrapResult.OVN.ExistingNodeDaemonset, bootstrapResult.OVN.ExistingMasterDaemonset, os.Getenv("RELEASE_VERSION"))
 	}
 
+	renderPrePull := false
+	if updateNode {
+		updateNode, renderPrePull = shouldUpdateOVNKonPrepull(existingNode, existingPP, os.Getenv("RELEASE_VERSION"))
+	}
+
 	// If we need to delay master or node daemonset rollout, then we'll replace the new one with the existing one
 	if !updateMaster {
 		us, err := k8s.ToUnstructured(bootstrapResult.OVN.ExistingMasterDaemonset)
@@ -189,6 +194,9 @@ func renderOVNKubernetes(conf *operv1.NetworkSpec, bootstrapResult *bootstrap.Bo
 			return nil, errors.Wrap(err, "failed to transmute existing node daemonset")
 		}
 		objs = k8s.ReplaceObj(objs, us)
+	}
+	if !renderPrePull {
+		// remove prepull from the list of objects
 	}
 
 	return objs, nil
@@ -514,6 +522,41 @@ func listenDualStack(masterIP string) string {
 		// IPv4 master, be IPv4-only for backward-compatibility
 		return ""
 	}
+}
+
+// shouldUpdateOVNKonPrepull implements a simple pre-pulling daemonset. It ensures the ovn-k
+// container image is (probably) already pulled by every node.
+// If the existing node daemonset has a different version then what we would like to apply, we first
+// roll out a no-op daemonset. Then, when that has rolled out to 100% of the cluster or has stopped
+// progressing, proceed with the node upgrade.
+//
+// TODO: get existing pre-pull in bootstrapOVNK
+// TODO: add the no-op daemonset in bindata
+func shouldUpdateOVNKonPrepull(existingNode, existingPrePull *appsv1.DaemonSet, releaseVersion string) (updateNode, renderPrepull bool) {
+	if existingNode == nil {
+		return true, false
+	}
+
+	// if node is already upgraded, then no need to pre-pull
+	existingVersion := existingNode.GetAnnotations()["release.openshift.io/version"]
+	if existingVersion == releaseVersion {
+		return true, false
+	}
+
+	// at this point, we've determined we need an upgrade
+	if existingPrePull == nil {
+		klog.Infof("something")
+		return false, true
+	}
+
+	if daemonSetProgressing(existingPrePull, true) {
+		klog.Infof("something")
+		return false, true
+	}
+
+	klog.Infof("something")
+	return true, false
+
 }
 
 // shouldUpdateOVNKonIPFamilyChange determines if we should roll out changes to
